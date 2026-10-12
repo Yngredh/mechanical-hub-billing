@@ -1,0 +1,60 @@
+{
+  "info": {
+    "name": "mechanical-hub-billing",
+    "description": "O billing so expoe o webhook publico do Mercado Pago e o actuator. generateBudget e generatePaymentLink chegam pela fila SQS (ver README); os corpos de exemplo estao nas pastas de comandos como referencia para 'aws sqs send-message'.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "mpOrderId", "value": "ORD01TEST" },
+    { "key": "signature", "value": "ts=1700000000,v1=<hmac-sha256>" },
+    { "key": "requestId", "value": "00000000-0000-0000-0000-000000000001" }
+  ],
+  "item": [
+    {
+      "name": "Webhook de pagamento (Mercado Pago)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-signature", "value": "{{signature}}" },
+          { "key": "x-request-id", "value": "{{requestId}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"action\": \"order.processed\",\n  \"type\": \"order\",\n  \"data\": { \"id\": \"{{mpOrderId}}\" }\n}" },
+        "url": "{{baseUrl}}/webhooks/payment"
+      }
+    },
+    {
+      "name": "Health",
+      "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/actuator/health" }
+    },
+    {
+      "name": "Metricas Prometheus",
+      "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/actuator/prometheus" }
+    },
+    {
+      "name": "Comando generateBudget (corpo da mensagem SQS)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"transactionId\": \"{{$guid}}\",\n  \"orderId\": \"{{$guid}}\",\n  \"type\": \"generateBudget\",\n  \"version\": 1,\n  \"timestamp\": \"2026-01-01T00:00:00Z\",\n  \"repairs\": [\"<repairId do seed>\"],\n  \"reservedMaterials\": [{ \"materialId\": \"<materialId do seed>\", \"quantity\": 2 }]\n}"
+        },
+        "url": "http://localhost:4566/000000000000/mechanical-hub-billing-commands.fifo"
+      }
+    },
+    {
+      "name": "Comando generatePaymentLink (corpo da mensagem SQS)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"transactionId\": \"<mesmo transactionId>\",\n  \"orderId\": \"<mesmo orderId>\",\n  \"type\": \"generatePaymentLink\",\n  \"version\": 1,\n  \"timestamp\": \"2026-01-01T00:00:00Z\",\n  \"budgetId\": \"<budgetId do budgetGenerated>\",\n  \"orderCost\": 350.00\n}"
+        },
+        "url": "http://localhost:4566/000000000000/mechanical-hub-billing-commands.fifo"
+      }
+    }
+  ]
+}

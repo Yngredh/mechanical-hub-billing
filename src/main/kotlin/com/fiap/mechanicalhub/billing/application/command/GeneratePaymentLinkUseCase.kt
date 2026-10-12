@@ -6,8 +6,11 @@ import com.fiap.mechanicalhub.billing.application.payment.PaymentGateway
 import com.fiap.mechanicalhub.billing.application.payment.TransactionRunner
 import com.fiap.mechanicalhub.billing.domain.BusinessRuleException
 import com.fiap.mechanicalhub.billing.domain.payment.PaymentDeadlines
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.stereotype.Component
 import org.springframework.stereotype.Service
 import java.time.Clock
+import java.time.Duration
 import java.util.UUID
 
 /**
@@ -21,13 +24,13 @@ class GeneratePaymentLinkUseCase(
     private val budgets: BudgetStore,
     private val responder: InboxResponder,
     private val transactions: TransactionRunner,
-    private val clock: Clock,
+    private val deadlineFactory: PaymentDeadlineFactory,
 ) {
     fun execute(command: GeneratePaymentLinkCommand) {
         val handled = transactions.run { reuseExisting(command) }
         if (handled) return
 
-        val deadlines = PaymentDeadlines.from(clock.instant())
+        val deadlines = deadlineFactory.create()
         val created =
             gateway.createOrder(
                 CreateOrderCommand(
@@ -87,4 +90,13 @@ class GeneratePaymentLinkUseCase(
                     ),
             ),
         )
+}
+
+/** Calcula os prazos do pagamento; o prazo de vencimento é configurável (padrão 24h, reduzido só em demonstração). */
+@Component
+class PaymentDeadlineFactory(
+    private val clock: Clock,
+    @Value("\${billing.payment.due-delay:PT24H}") private val dueDelay: Duration = PaymentDeadlines.DUE_DELAY,
+) {
+    fun create(): PaymentDeadlines = PaymentDeadlines.from(clock.instant(), dueDelay)
 }

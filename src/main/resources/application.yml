@@ -18,6 +18,10 @@ billing:
     commands-dlq: ${BILLING_COMMANDS_DLQ_URL:mechanical-hub-billing-commands-dlq.fifo}
     events: ${ORCHESTRATOR_EVENTS_QUEUE_URL:mechanical-hub-orchestrator-events.fifo}
 
+  payment:
+    # Prazo de pagamento (due_at), ISO-8601. Padrao 24h; reduzir (ex.: PT30M) so para demonstracao.
+    due-delay: ${BILLING_PAYMENT_DUE_DELAY:PT24H}
+
 mercado-pago:
   base-url: ${MP_BASE_URL:https://api.mercadopago.com}
   access-token: ${MP_ACCESS_TOKEN:}

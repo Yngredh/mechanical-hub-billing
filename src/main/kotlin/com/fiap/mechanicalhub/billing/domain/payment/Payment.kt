@@ -11,7 +11,13 @@ data class PaymentDeadlines(val dueAt: Instant, val expiresAt: Instant) {
         val DUE_DELAY: Duration = Duration.ofHours(24)
         val EXPIRATION_DELAY: Duration = Duration.ofHours(24).plusMinutes(5)
 
-        fun from(createdAt: Instant) = PaymentDeadlines(createdAt + DUE_DELAY, createdAt + EXPIRATION_DELAY)
+        val EXPIRATION_GRACE: Duration = Duration.ofMinutes(5)
+
+        fun from(
+            createdAt: Instant,
+            dueDelay: Duration = DUE_DELAY,
+            grace: Duration = EXPIRATION_GRACE,
+        ) = PaymentDeadlines(createdAt + dueDelay, createdAt + dueDelay + grace)
     }
 }
 
