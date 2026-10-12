@@ -7,6 +7,10 @@ import com.fiap.mechanicalhub.billing.application.payment.PermanentGatewayExcept
 import com.fiap.mechanicalhub.billing.application.payment.TransientGatewayException
 import com.fiap.mechanicalhub.billing.domain.payment.CancelOutcome
 import com.fiap.mechanicalhub.billing.domain.payment.OrderLookup
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Metrics
+import io.micrometer.core.instrument.Timer
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import java.io.IOException
 import java.net.URI
@@ -19,12 +23,13 @@ import java.time.Duration
 @Component
 class MercadoPagoPaymentGateway(
     private val properties: MercadoPagoProperties,
+    private val registry: MeterRegistry = Metrics.globalRegistry,
 ) : PaymentGateway {
     private val httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build()
 
     override fun createOrder(command: CreateOrderCommand): CreatedOrder {
         val body = MercadoPagoJson.createOrderBody(command)
-        val response = send(post("/v1/orders", command.idempotencyKey, body))
+        val response = send("createOrder", post("/v1/orders", command.idempotencyKey, body))
         return when (classify(response.statusCode())) {
             HttpClass.SUCCESS -> MercadoPagoJson.parseCreated(response.body())
             HttpClass.TRANSIENT -> throw TransientGatewayException("MP indisponivel (${response.statusCode()})")
@@ -34,7 +39,7 @@ class MercadoPagoPaymentGateway(
 
     override fun getOrder(mpOrderId: String): OrderLookup {
         val response =
-            runCatching { send(base("/v1/orders/$mpOrderId").GET().build()) }
+            runCatching { send("getOrder", base("/v1/orders/$mpOrderId").GET().build()) }
                 .getOrElse { return OrderLookup.Transient }
         return when (classify(response.statusCode())) {
             HttpClass.SUCCESS -> MercadoPagoJson.parseLookup(response.body())
@@ -45,7 +50,7 @@ class MercadoPagoPaymentGateway(
 
     override fun cancelOrder(mpOrderId: String, idempotencyKey: String): CancelOutcome {
         val response =
-            runCatching { send(post("/v1/orders/$mpOrderId/cancel", idempotencyKey, "")) }
+            runCatching { send("cancelOrder", post("/v1/orders/$mpOrderId/cancel", idempotencyKey, "")) }
                 .getOrElse { return CancelOutcome.Transient }
         if (response.statusCode() == STATUS_CONFLICT) return CancelOutcome.Conflict
         return when (classify(response.statusCode())) {
@@ -69,15 +74,33 @@ class MercadoPagoPaymentGateway(
             .POST(HttpRequest.BodyPublishers.ofString(body))
             .build()
 
-    private fun send(request: HttpRequest): HttpResponse<String> =
+    /** Mede latência por operação (`mercadopago_request_seconds{operation,status}`) e alerta em 401/404. */
+    private fun send(operation: String, request: HttpRequest): HttpResponse<String> {
+        val sample = Timer.start(registry)
+        var status = "error"
         try {
-            httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+            status = response.statusCode().toString()
+            if (response.statusCode() == STATUS_UNAUTHORIZED || response.statusCode() == STATUS_NOT_FOUND) {
+                registry.counter("billing_alerts_total", "type", "MP_$status").increment()
+                log.error("ALERTA: Mercado Pago respondeu {} em {}", status, operation)
+            }
+            return response
         } catch (exception: IOException) {
             throw TransientGatewayException("Falha de comunicacao com o Mercado Pago", exception)
         } catch (exception: InterruptedException) {
             Thread.currentThread().interrupt()
             throw TransientGatewayException("Chamada ao Mercado Pago interrompida", exception)
+        } finally {
+            sample.stop(
+                Timer
+                    .builder("mercadopago_request_seconds")
+                    .tag("operation", operation)
+                    .tag("status", status)
+                    .register(registry),
+            )
         }
+    }
 
     private fun classify(status: Int): HttpClass =
         when {
@@ -92,6 +115,9 @@ class MercadoPagoPaymentGateway(
         val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(2)
         val READ_TIMEOUT: Duration = Duration.ofSeconds(5)
         val HTTP_SUCCESS_RANGE = 200..299
+        val log = LoggerFactory.getLogger(MercadoPagoPaymentGateway::class.java)
+        const val STATUS_UNAUTHORIZED = 401
+        const val STATUS_NOT_FOUND = 404
         const val STATUS_CONFLICT = 409
         const val STATUS_TOO_MANY_REQUESTS = 429
         const val STATUS_SERVER_ERROR = 500

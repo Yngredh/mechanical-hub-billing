@@ -119,6 +119,11 @@
             <scope>runtime</scope>
             <optional>true</optional>
         </dependency>
+        <!-- API do OpenTelemetry: o agente (javaagent) fornece a implementação em runtime. -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+        </dependency>
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>

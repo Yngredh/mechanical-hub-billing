@@ -3,6 +3,7 @@ package com.fiap.mechanicalhub.billing.infrastructure.messaging
 import com.fiap.mechanicalhub.billing.application.payment.OutboxMessageSender
 import com.fiap.mechanicalhub.billing.application.payment.TransactionRunner
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.scheduling.annotation.EnableScheduling
@@ -66,7 +67,7 @@ class OutboxRelay(
             var sent = 0
             for (event in pending) {
                 try {
-                    sender.send(event.aggregateId, event.eventId, event.payload)
+                    sendWithMdc(event)
                 } catch (e: Exception) {
                     log.error("Falha ao enviar outbox sequence={} eventId={}", event.sequence, event.eventId, e)
                     jdbc
@@ -84,6 +85,14 @@ class OutboxRelay(
             }
             sent
         }
+
+    private fun sendWithMdc(event: Pending) {
+        MDC.putCloseable("eventId", event.eventId.toString()).use {
+            MDC.putCloseable("orderId", event.aggregateId.toString()).use {
+                sender.send(event.aggregateId, event.eventId, event.payload)
+            }
+        }
+    }
 
     private data class Pending(val sequence: Long, val eventId: UUID, val aggregateId: UUID, val payload: String)
 

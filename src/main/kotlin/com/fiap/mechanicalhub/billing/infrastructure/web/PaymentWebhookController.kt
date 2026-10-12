@@ -3,7 +3,10 @@ package com.fiap.mechanicalhub.billing.infrastructure.web
 import com.fiap.mechanicalhub.billing.application.payment.ConfirmPaymentUseCase
 import com.fiap.mechanicalhub.billing.application.payment.WebhookResult
 import com.fiap.mechanicalhub.billing.infrastructure.mercadopago.WebhookSignatureValidator
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Metrics
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.dao.DataAccessException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -20,6 +23,7 @@ import tools.jackson.databind.json.JsonMapper
 class PaymentWebhookController(
     private val signatureValidator: WebhookSignatureValidator,
     private val confirmPayment: ConfirmPaymentUseCase,
+    private val registry: MeterRegistry = Metrics.globalRegistry,
 ) {
     private val mapper = JsonMapper.builder().build()
 
@@ -30,11 +34,23 @@ class PaymentWebhookController(
         @RequestHeader("x-request-id", required = false) requestId: String?,
         @RequestParam("data.id", required = false) queryDataId: String?,
     ): ResponseEntity<Void> {
+        val response = handle(body, signature, requestId, queryDataId)
+        registry.counter("billing_webhook_total", "result", response.statusCode.value().toString()).increment()
+        return response
+    }
+
+    private fun handle(
+        body: String?,
+        signature: String?,
+        requestId: String?,
+        queryDataId: String?,
+    ): ResponseEntity<Void> {
         val dataId = extractDataId(body) ?: queryDataId?.takeIf { it.isNotBlank() }
         if (!signatureValidator.isValid(signature, requestId, dataId)) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build()
         }
         if (dataId == null) return ResponseEntity.ok().build()
+        MDC.put("mpOrderId", dataId)
         return try {
             when (confirmPayment.execute(dataId)) {
                 WebhookResult.CONFIRMED, WebhookResult.IGNORED -> ResponseEntity.ok().build()
@@ -43,6 +59,8 @@ class PaymentWebhookController(
         } catch (exception: DataAccessException) {
             log.error("Falha ao processar webhook da order {}", dataId, exception)
             ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build()
+        } finally {
+            MDC.remove("mpOrderId")
         }
     }
 

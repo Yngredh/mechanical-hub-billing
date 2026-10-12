@@ -3,6 +3,8 @@ package com.fiap.mechanicalhub.billing.application.payment
 import com.fiap.mechanicalhub.billing.domain.payment.OrderLookup
 import com.fiap.mechanicalhub.billing.domain.payment.PaymentStatusEnum
 import com.fiap.mechanicalhub.billing.domain.payment.PaymentTransition
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Metrics
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Clock
@@ -26,6 +28,7 @@ class ConfirmPaymentUseCase(
     private val outbox: EventOutbox,
     private val transactions: TransactionRunner,
     private val clock: Clock,
+    private val registry: MeterRegistry = Metrics.globalRegistry,
 ) {
     /** A consulta ao Mercado Pago acontece fora da transação; só a escrita final trava a linha. */
     fun execute(mpOrderId: String): WebhookResult =
@@ -60,6 +63,7 @@ class ConfirmPaymentUseCase(
         return when (val transition = record.payment.approve(mpStatus, clock.instant())) {
             PaymentTransition.Skipped -> {
                 if (record.payment.status == PaymentStatusEnum.CANCELED) {
+                    registry.counter("billing_alerts_total", "type", "PAID_ON_CANCELED").increment()
                     log.error("ALERTA: order {} paga no Mercado Pago mas pagamento ja CANCELED", mpOrderId)
                 }
                 WebhookResult.IGNORED

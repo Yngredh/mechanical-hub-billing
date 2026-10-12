@@ -2,6 +2,8 @@ package com.fiap.mechanicalhub.billing.infrastructure.persistence
 
 import com.fiap.mechanicalhub.billing.application.payment.EventOutbox
 import com.fiap.mechanicalhub.billing.application.payment.OutboxMessage
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Metrics
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.stereotype.Repository
 import tools.jackson.databind.json.JsonMapper
@@ -13,6 +15,7 @@ import java.util.UUID
 class JdbcEventOutbox(
     private val jdbc: JdbcClient,
     private val clock: Clock,
+    private val registry: MeterRegistry = Metrics.globalRegistry,
 ) : EventOutbox {
     private val mapper = JsonMapper.builder().build()
 
@@ -38,6 +41,11 @@ class JdbcEventOutbox(
             .param("eventType", message.type)
             .param("payload", mapper.writeValueAsString(envelope))
             .update()
+        if (message.type == "paymentFailed") {
+            registry
+                .counter("billing_payment_failed_total", "reason", message.payload["reason"]?.toString() ?: "UNKNOWN")
+                .increment()
+        }
     }
 
     private companion object {

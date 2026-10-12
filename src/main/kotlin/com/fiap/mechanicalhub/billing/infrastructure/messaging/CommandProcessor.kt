@@ -8,6 +8,7 @@ import com.fiap.mechanicalhub.billing.application.command.PermanentCommandExcept
 import com.fiap.mechanicalhub.billing.application.payment.PermanentGatewayException
 import com.fiap.mechanicalhub.billing.domain.BusinessRuleException
 import com.fiap.mechanicalhub.billing.domain.budget.MaterialRequest
+import org.slf4j.MDC
 import org.springframework.stereotype.Component
 import tools.jackson.core.JacksonException
 import tools.jackson.databind.JsonNode
@@ -36,10 +37,18 @@ class CommandProcessor(
 
     private fun dispatch(body: String) {
         val root = mapper.readTree(body)
-        when (val type = text(root, "type")) {
-            "generateBudget" -> generateBudget.execute(budgetCommand(root))
-            "generatePaymentLink" -> generatePaymentLink.execute(paymentLinkCommand(root))
-            else -> throw PermanentCommandException("Comando desconhecido: $type")
+        MDC_FIELDS.forEach { field ->
+            val value = root.path(field).asString("")
+            if (value.isNotBlank()) MDC.put(field, value)
+        }
+        try {
+            when (val type = text(root, "type")) {
+                "generateBudget" -> generateBudget.execute(budgetCommand(root))
+                "generatePaymentLink" -> generatePaymentLink.execute(paymentLinkCommand(root))
+                else -> throw PermanentCommandException("Comando desconhecido: $type")
+            }
+        } finally {
+            MDC_FIELDS.forEach { MDC.remove(it) }
         }
     }
 
@@ -94,4 +103,8 @@ class CommandProcessor(
 
     private fun text(node: JsonNode, field: String): String =
         node.path(field).asString("").also { require(it.isNotBlank()) { "Campo obrigatório ausente: $field" } }
+
+    private companion object {
+        val MDC_FIELDS = listOf("orderId", "transactionId")
+    }
 }
