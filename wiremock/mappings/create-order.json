@@ -1,0 +1,16 @@
+{
+  "request": { "method": "POST", "urlPath": "/v1/orders" },
+  "response": {
+    "status": 201,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "id": "ORD{{randomValue length=20 type='NUMERIC'}}",
+      "status": "created",
+      "status_detail": "created",
+      "type": "online",
+      "external_reference": "{{jsonPath request.body '$.external_reference'}}",
+      "transactions": { "payments": [] },
+      "checkout_url": "http://localhost:8089/checkout/mock"
+    }
+  }
+}

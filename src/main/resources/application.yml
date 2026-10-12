@@ -12,6 +12,16 @@ spring:
       sqs:
         endpoint: ${AWS_SQS_ENDPOINT:}
 
+billing:
+  queues:
+    commands: ${BILLING_COMMANDS_QUEUE_URL:mechanical-hub-billing-commands.fifo}
+    events: ${ORCHESTRATOR_EVENTS_QUEUE_URL:mechanical-hub-orchestrator-events.fifo}
+
+mercado-pago:
+  base-url: ${MP_BASE_URL:https://api.mercadopago.com}
+  access-token: ${MP_ACCESS_TOKEN:}
+  webhook-secret: ${MP_WEBHOOK_SECRET:}
+
 management:
   endpoints:
     web:

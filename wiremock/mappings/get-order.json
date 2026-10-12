@@ -1,0 +1,13 @@
+{
+  "request": { "method": "GET", "urlPathPattern": "/v1/orders/[^/]+" },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "id": "{{request.pathSegments.[2]}}",
+      "status": "processed",
+      "status_detail": "accredited",
+      "type": "online"
+    }
+  }
+}
