@@ -1,0 +1,32 @@
+# Entre 1 e 2 replicas (infrastructure.md §3). O relay do outbox e lider unico
+# (pg_try_advisory_lock) e o consumo SQS e por grupo, entao 2 replicas nao
+# duplicam publicacao nem processamento.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mechanical-hub-billing-hpa
+  namespace: production
+  labels:
+    app: mechanical-hub-billing
+    app.kubernetes.io/name: billing
+
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mechanical-hub-billing
+
+  minReplicas: 1
+  maxReplicas: 2
+
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300

@@ -1,0 +1,20 @@
+# NodePort fixa 30082: mesmo valor do target group/listener do billing no NLB
+# interno (variavel `services` do mechanical-hub-infra). Mudar aqui exige mudar
+# la junto.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mechanical-hub-billing-svc
+  namespace: production
+  labels:
+    app: mechanical-hub-billing
+    app.kubernetes.io/name: billing
+spec:
+  type: NodePort
+  selector:
+    app: mechanical-hub-billing
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30082

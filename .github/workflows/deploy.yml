@@ -1,0 +1,285 @@
+name: CI/CD
+
+# PR: build, testes (Testcontainers) e SonarQube Cloud (quality gate como
+# checagem obrigatoria). Push na main: o mesmo + imagem no ECR, deploy no EKS
+# e smoke test.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  JAVA_VERSION: '25'
+  TF_VERSION: 1.7.5
+  NAMESPACE: production
+  DEPLOYMENT: mechanical-hub-billing
+  SERVICE: mechanical-hub-billing-svc
+
+jobs:
+  # ── Build, testes e qualidade ─────────────────────────────────────────────
+  build:
+    name: Build, testes e Sonar
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # O Sonar usa o historico para atribuir codigo novo.
+          fetch-depth: 0
+
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+
+      # Testes unitarios e de integracao (PostgreSQL e LocalStack em
+      # Testcontainers, no Docker do runner), ktlint, detekt e
+      # jacoco:check (cobertura minima de 80%).
+      - name: Verify
+        run: ./mvnw -B --no-transfer-progress verify
+
+      - name: SonarQube Cloud
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "${SONAR_TOKEN}" ]; then
+            echo "::warning::SONAR_TOKEN nao configurado: analise do SonarQube Cloud ignorada."
+            exit 0
+          fi
+          ./mvnw -B --no-transfer-progress sonar:sonar \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }} \
+            -Dsonar.qualitygate.wait=true
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: target/site/jacoco/
+          retention-days: 14
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          retention-days: 7
+
+  # ── Outputs da infraestrutura (somente leitura) ───────────────────────────
+  resolve-infra:
+    name: Resolver infraestrutura
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    outputs:
+      eks-cluster-name: ${{ steps.tf-outputs.outputs.eks_cluster_name }}
+      ecr-repository-name: ${{ steps.tf-outputs.outputs.ecr_repository_name }}
+      db-endpoint: ${{ steps.tf-outputs.outputs.db_endpoint }}
+      db-port: ${{ steps.tf-outputs.outputs.db_port }}
+      db-name: ${{ steps.tf-outputs.outputs.db_name }}
+      db-username: ${{ steps.tf-outputs.outputs.db_username }}
+      billing-commands-queue-url: ${{ steps.tf-outputs.outputs.billing_commands_queue_url }}
+      billing-commands-dlq-url: ${{ steps.tf-outputs.outputs.billing_commands_dlq_url }}
+      orchestrator-events-queue-url: ${{ steps.tf-outputs.outputs.orchestrator_events_queue_url }}
+      otlp-http-endpoint: ${{ steps.tf-outputs.outputs.otlp_http_endpoint }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Read remote states
+        working-directory: ci/remote-state
+        env:
+          TF_VAR_state_bucket: mechanical-hub-tfstate-${{ secrets.AWS_ACCOUNT_ID }}
+          TF_VAR_state_region: ${{ env.AWS_REGION }}
+        run: |
+          terraform init -input=false
+          terraform apply -auto-approve -input=false
+
+      - name: Publish contract outputs
+        id: tf-outputs
+        working-directory: ci/remote-state
+        run: |
+          set -euo pipefail
+          for o in eks_cluster_name db_endpoint db_port db_name db_username \
+                   billing_commands_queue_url billing_commands_dlq_url orchestrator_events_queue_url; do
+            value="$(terraform output -raw "$o")"
+            if [ -z "$value" ]; then
+              echo "::error::Output '$o' veio vazio. Aplique mechanical-hub-infra e mechanical-hub-database antes deste pipeline."
+              exit 1
+            fi
+            echo "${o}=${value}" >> "$GITHUB_OUTPUT"
+          done
+
+          # Caminho do repositorio sem o host: o host contem o ID da conta e
+          # seria redigido ao passar de um job para outro.
+          echo "ecr_repository_name=$(terraform output -raw ecr_repository_url | cut -d/ -f2-)" >> "$GITHUB_OUTPUT"
+
+          # Opcional: null com a observabilidade desligada.
+          otlp="$(terraform output -json otlp_http_endpoint | jq -r '. // ""')"
+          echo "otlp_http_endpoint=${otlp}" >> "$GITHUB_OUTPUT"
+          if [ -z "$otlp" ]; then
+            echo "::warning::Coletor OpenTelemetry indisponivel: traces nao serao exportados."
+          fi
+
+  # ── Imagem no ECR ─────────────────────────────────────────────────────────
+  build-and-push:
+    name: Imagem no ECR
+    runs-on: ubuntu-latest
+    needs: [resolve-infra]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    outputs:
+      image-tag: ${{ steps.image-meta.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: image-meta
+        run: echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.ecr-login.outputs.registry }}/${{ needs.resolve-infra.outputs.ecr-repository-name }}:${{ steps.image-meta.outputs.tag }}
+            ${{ steps.ecr-login.outputs.registry }}/${{ needs.resolve-infra.outputs.ecr-repository-name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Deploy no EKS e smoke test ────────────────────────────────────────────
+  deploy:
+    name: Deploy no EKS
+    runs-on: ubuntu-latest
+    needs: [resolve-infra, build-and-push]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # So para obter o host do registry sem trafegar o ID da conta entre jobs.
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --name ${{ needs.resolve-infra.outputs.eks-cluster-name }} --region ${{ env.AWS_REGION }}
+
+      - name: Apply manifests
+        env:
+          ECR_REPOSITORY_URL: ${{ steps.ecr-login.outputs.registry }}/${{ needs.resolve-infra.outputs.ecr-repository-name }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
+          DB_HOST: ${{ needs.resolve-infra.outputs.db-endpoint }}
+          DB_PORT: ${{ needs.resolve-infra.outputs.db-port }}
+          DB_NAME: ${{ needs.resolve-infra.outputs.db-name }}
+          DB_USERNAME: ${{ needs.resolve-infra.outputs.db-username }}
+          DB_PASSWORD: ${{ secrets.BILLING_DB_APP_PASSWORD }}
+          MP_ACCESS_TOKEN: ${{ secrets.MP_ACCESS_TOKEN }}
+          MP_WEBHOOK_SECRET: ${{ secrets.MP_WEBHOOK_SECRET }}
+          BILLING_COMMANDS_QUEUE_URL: ${{ needs.resolve-infra.outputs.billing-commands-queue-url }}
+          BILLING_COMMANDS_DLQ_URL: ${{ needs.resolve-infra.outputs.billing-commands-dlq-url }}
+          ORCHESTRATOR_EVENTS_QUEUE_URL: ${{ needs.resolve-infra.outputs.orchestrator-events-queue-url }}
+          OTLP_HTTP_ENDPOINT: ${{ needs.resolve-infra.outputs.otlp-http-endpoint }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DB_PASSWORD}" ]; then
+            echo "::error::Secret BILLING_DB_APP_PASSWORD nao configurado."
+            exit 1
+          fi
+          if [ -z "${MP_ACCESS_TOKEN}" ] || [ -z "${MP_WEBHOOK_SECRET}" ]; then
+            echo "::error::Secrets MP_ACCESS_TOKEN e MP_WEBHOOK_SECRET sao obrigatorios."
+            exit 1
+          fi
+
+          # O agente OpenTelemetry acrescenta /v1/traces ao endpoint OTLP/HTTP.
+          export OTEL_EXPORTER_OTLP_ENDPOINT="${OTLP_HTTP_ENDPOINT}"
+          if [ -n "${OTLP_HTTP_ENDPOINT}" ]; then
+            export OTEL_TRACES_EXPORTER=otlp
+          else
+            export OTEL_TRACES_EXPORTER=none
+          fi
+
+          kubectl apply -f k8s/namespace.yaml
+          for manifest in secret.yaml configmap.yaml deployment.yaml service.yaml hpa.yaml; do
+            echo "→ $manifest"
+            envsubst < "k8s/$manifest" | kubectl apply -f -
+          done
+
+      - name: Wait for rollout
+        run: kubectl rollout status deployment/${{ env.DEPLOYMENT }} --namespace ${{ env.NAMESPACE }} --timeout=600s
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          kubectl port-forward --namespace ${{ env.NAMESPACE }} service/${{ env.SERVICE }} 18080:80 > /tmp/port-forward.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -fs http://localhost:18080/actuator/health/liveness > /dev/null 2>&1 && break
+            sleep 1
+          done
+          bash ci/smoke-test.sh http://localhost:18080
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          kubectl get pods -n ${{ env.NAMESPACE }} -l app=${{ env.DEPLOYMENT }} -o wide || true
+          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=${{ env.DEPLOYMENT }} | tail -80 || true
+          for pod in $(kubectl get pods -n ${{ env.NAMESPACE }} -l app=${{ env.DEPLOYMENT }} -o jsonpath='{.items[*].metadata.name}'); do
+            echo "--- $pod (anterior) ---"
+            kubectl logs "$pod" -n ${{ env.NAMESPACE }} --previous --tail=100 2>/dev/null || true
+            echo "--- $pod (atual) ---"
+            kubectl logs "$pod" -n ${{ env.NAMESPACE }} --tail=100 || true
+          done

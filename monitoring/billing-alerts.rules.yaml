@@ -1,0 +1,29 @@
+# Regras de alerta do billing no formato do kube-prometheus-stack. As regras
+# vivem no mechanical-hub-infra (modules/observability/values/
+# kube-prometheus-stack.yaml.tftpl): copiar este grupo para la.
+groups:
+  - name: mechanical-hub-billing
+    rules:
+      # 401 do Mercado Pago = token invalido/expirado; 404 = pedido inexistente
+      # no MP (inconsistencia). Ambos exigem acao humana.
+      - alert: BillingMercadoPagoNaoAutorizadoOuNaoEncontrado
+        expr: |
+          increase(billing_alerts_total{type=~"MP_401|MP_404"}[5m]) > 0
+        labels:
+          severity: critical
+          component: billing
+        annotations:
+          summary: "Billing recebeu {{ $labels.type }} do Mercado Pago"
+          description: "Verifique MP_ACCESS_TOKEN (401) ou o mpOrderId consultado (404). Procure o log ALERTA."
+
+      # Webhook processado para pagamento ja CANCELED: o cliente pode ter pago
+      # um link cancelado; reembolso/conciliacao manual.
+      - alert: BillingPagamentoPagoEmCancelado
+        expr: |
+          increase(billing_alerts_total{type="PAID_ON_CANCELED"}[5m]) > 0
+        labels:
+          severity: critical
+          component: billing
+        annotations:
+          summary: "Pagamento confirmado em cobranca CANCELED"
+          description: "Conciliar manualmente (estorno). Procure o log ALERTA com orderId e mpOrderId."

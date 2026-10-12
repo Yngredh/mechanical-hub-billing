@@ -1,0 +1,8 @@
+# Namespace compartilhado pelos 4 servicos (var.app_namespace do
+# mechanical-hub-infra). Aplicar de novo e idempotente.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    name: production
