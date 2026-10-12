@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: mechanical-hub-billing
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/billing}
+    username: ${DB_USER:billing}
+    password: ${DB_PASSWORD:secret}
+  cloud:
+    aws:
+      region:
+        static: ${AWS_REGION:us-east-1}
+      sqs:
+        endpoint: ${AWS_SQS_ENDPOINT:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
