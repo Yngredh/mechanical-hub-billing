@@ -26,6 +26,9 @@ interface PaymentStore {
 
     /** Grava a transição apenas se a linha ainda estiver PENDING; devolve se alterou. */
     fun updateIfPending(record: PaymentRecord): Boolean
+
+    /** Pagamentos PENDING vencidos (`due_at <= now`), sem lock de linha. */
+    fun findDue(now: java.time.Instant, limit: Int): List<PaymentRecord>
 }
 
 /** Grava o evento no outbox na transação corrente. */

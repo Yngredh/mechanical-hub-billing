@@ -41,6 +41,19 @@ class JdbcPaymentStore(private val jdbc: JdbcClient) : PaymentStore {
             .param("paymentId", record.paymentId)
             .update() == 1
 
+    override fun findDue(now: Instant, limit: Int): List<PaymentRecord> =
+        jdbc
+            .sql(
+                """
+                SELECT payment_id, order_id, transaction_id, mp_order_id, status, mp_status, paid_at, canceled_at
+                FROM payments WHERE status = 'PENDING' AND due_at <= :now
+                ORDER BY due_at LIMIT :limit
+                """.trimIndent(),
+            ).param("now", toOffset(now))
+            .param("limit", limit)
+            .query { rs, _ -> toRecord(rs) }
+            .list()
+
     private fun toOffset(instant: Instant?): OffsetDateTime? = instant?.atOffset(ZoneOffset.UTC)
 
     private fun toRecord(rs: ResultSet) =
