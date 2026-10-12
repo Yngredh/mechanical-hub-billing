@@ -15,6 +15,7 @@ spring:
 billing:
   queues:
     commands: ${BILLING_COMMANDS_QUEUE_URL:mechanical-hub-billing-commands.fifo}
+    commands-dlq: ${BILLING_COMMANDS_DLQ_URL:mechanical-hub-billing-commands-dlq.fifo}
     events: ${ORCHESTRATOR_EVENTS_QUEUE_URL:mechanical-hub-orchestrator-events.fifo}
 
 mercado-pago:
