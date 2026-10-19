@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mechanical-hub-billing
+  namespace: production
+  labels:
+    app: mechanical-hub-billing
+    app.kubernetes.io/name: billing
+    app.kubernetes.io/component: api
+
+spec:
+  # O HPA assume o numero de replicas (1-2) depois do primeiro deploy.
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: mechanical-hub-billing
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  template:
+    metadata:
+      labels:
+        app: mechanical-hub-billing
+        # Contrato de scrape do mechanical-hub-infra: pod no namespace
+        # `production` com app.kubernetes.io/name igual a chave do servico e
+        # porta de container chamada `http`.
+        app.kubernetes.io/name: billing
+
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: billing
+          image: ${ECR_REPOSITORY_URL}:${IMAGE_TAG}
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8080
+              name: http
+
+          envFrom:
+            - configMapRef:
+                name: mechanical-hub-billing-config
+
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mechanical-hub-billing-secrets
+                  key: database-password
+            - name: MP_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mechanical-hub-billing-secrets
+                  key: mp-access-token
+            - name: MP_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mechanical-hub-billing-secrets
+                  key: mp-webhook-secret
+
+          # ~1/4 da fatia dos 4 servicos em infrastructure.md §3 (1 vCPU / 3 GiB).
+          # O heap e 75% do limite (MaxRAMPercentage no Dockerfile).
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "640Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+
+          # Com o agente OpenTelemetry a subida leva ~25 s; ate 3 min de folga
+          # para as migrations no primeiro deploy.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 18
+
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+      restartPolicy: Always

@@ -1,0 +1,14 @@
+# Sobrescreve apenas o necessario; o resto vem da configuracao padrao do detekt
+# (buildUponDefaultConfig = true no pom.xml).
+style:
+  MagicNumber:
+    ignorePropertyDeclaration: true
+    ignoreCompanionObjectPropertyDeclaration: true
+    ignoreAnnotation: true
+  ReturnCount:
+    max: 3
+
+performance:
+  SpreadOperator:
+    # runApplication(*args) e o ponto de entrada padrao do Spring Boot.
+    excludes: ['**/*Application.kt']
