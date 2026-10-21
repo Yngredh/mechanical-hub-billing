@@ -139,6 +139,9 @@ jobs:
               echo "::error::Output '$o' veio vazio. Aplique mechanical-hub-infra e mechanical-hub-database antes deste pipeline."
               exit 1
             fi
+            # A URL da fila contem o ID da conta, que o GitHub redige ao passar valores
+            # entre jobs: publica so o nome; o deploy resolve a URL (aws sqs get-queue-url).
+            case "$o" in *_queue_url|*_dlq_url) value="${value##*/}" ;; esac
             echo "${o}=${value}" >> "$GITHUB_OUTPUT"
           done
 
@@ -231,6 +234,24 @@ jobs:
       - name: Configure kubectl
         run: aws eks update-kubeconfig --name ${{ needs.resolve-infra.outputs.eks-cluster-name }} --region ${{ env.AWS_REGION }}
 
+      # As URLs das filas contem o ID da conta (redigido entre jobs); o resolve-infra
+      # publica so o nome e a URL completa e obtida aqui, para os passos seguintes.
+      - name: Resolver URLs das filas SQS
+        env:
+          BILLING_COMMANDS_QUEUE_NAME: ${{ needs.resolve-infra.outputs.billing-commands-queue-url }}
+          BILLING_COMMANDS_DLQ_NAME: ${{ needs.resolve-infra.outputs.billing-commands-dlq-url }}
+          ORCHESTRATOR_EVENTS_QUEUE_NAME: ${{ needs.resolve-infra.outputs.orchestrator-events-queue-url }}
+        run: |
+          set -euo pipefail
+          resolve() {
+            if [ -z "$2" ]; then echo "::error::Nome da fila de $1 vazio."; exit 1; fi
+            url="$(aws sqs get-queue-url --queue-name "$2" --region "$AWS_REGION" --query QueueUrl --output text)"
+            echo "$1=${url}" >> "$GITHUB_ENV"
+          }
+          resolve BILLING_COMMANDS_QUEUE_URL "${BILLING_COMMANDS_QUEUE_NAME}"
+          resolve BILLING_COMMANDS_DLQ_URL "${BILLING_COMMANDS_DLQ_NAME}"
+          resolve ORCHESTRATOR_EVENTS_QUEUE_URL "${ORCHESTRATOR_EVENTS_QUEUE_NAME}"
+
       - name: Apply manifests
         env:
           ECR_REPOSITORY_URL: ${{ steps.ecr-login.outputs.registry }}/${{ needs.resolve-infra.outputs.ecr-repository-name }}
@@ -242,9 +263,6 @@ jobs:
           DB_PASSWORD: ${{ secrets.BILLING_DB_APP_PASSWORD }}
           MP_ACCESS_TOKEN: ${{ secrets.MP_ACCESS_TOKEN }}
           MP_WEBHOOK_SECRET: ${{ secrets.MP_WEBHOOK_SECRET }}
-          BILLING_COMMANDS_QUEUE_URL: ${{ needs.resolve-infra.outputs.billing-commands-queue-url }}
-          BILLING_COMMANDS_DLQ_URL: ${{ needs.resolve-infra.outputs.billing-commands-dlq-url }}
-          ORCHESTRATOR_EVENTS_QUEUE_URL: ${{ needs.resolve-infra.outputs.orchestrator-events-queue-url }}
           OTLP_HTTP_ENDPOINT: ${{ needs.resolve-infra.outputs.otlp-http-endpoint }}
         run: |
           set -euo pipefail
