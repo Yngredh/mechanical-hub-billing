@@ -36,7 +36,7 @@ class GeneratePaymentLinkUseCase(
                 CreateOrderCommand(
                     orderId = command.orderId.toString(),
                     amount = command.orderCost,
-                    expiresAt = deadlines.expiresAt,
+                    expiresIn = deadlines.expiresIn,
                     idempotencyKey = command.idempotencyKey,
                 ),
             )

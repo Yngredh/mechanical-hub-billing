@@ -18,7 +18,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
-import java.time.Instant
+import java.time.Duration
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
@@ -30,7 +30,7 @@ class MercadoPagoPaymentGatewayTest {
         CreateOrderCommand(
             orderId = "ord-1",
             amount = BigDecimal("350"),
-            expiresAt = Instant.parse("2026-10-13T10:05:00Z"),
+            expiresIn = Duration.ofHours(24).plusMinutes(5),
             idempotencyKey = "tx:GENERATE_PAYMENT_LINK",
         )
 
@@ -66,8 +66,8 @@ class MercadoPagoPaymentGatewayTest {
                     equalToJson(
                         """
                         {"type":"online","processing_mode":"manual","total_amount":"350.00",
-                         "external_reference":"ord-1","expiration_time":"2026-10-13T10:05:00Z",
-                         "items":[{"unit_price":"350.00","quantity":1,"total_amount":"350.00"}],
+                         "external_reference":"ord-1","expiration_time":"PT24H5M",
+                         "items":[{"unit_price":"350.00","quantity":1}],
                          "config":{"payment_method":{"not_allowed_types":["ticket"]}}}
                         """.trimIndent(),
                         true,

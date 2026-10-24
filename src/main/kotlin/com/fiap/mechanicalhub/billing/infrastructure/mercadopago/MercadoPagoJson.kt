@@ -19,7 +19,6 @@ internal object MercadoPagoJson {
                 "title" to "Ordem de serviço ${command.orderId} - Mechanical Hub",
                 "unit_price" to amount,
                 "quantity" to 1,
-                "total_amount" to amount,
             )
         val body =
             mapOf(
@@ -27,7 +26,7 @@ internal object MercadoPagoJson {
                 "processing_mode" to "manual",
                 "total_amount" to amount,
                 "external_reference" to command.orderId,
-                "expiration_time" to command.expiresAt.toString(),
+                "expiration_time" to command.expiresIn.toString(),
                 "items" to listOf(item),
                 "config" to mapOf("payment_method" to mapOf("not_allowed_types" to listOf("ticket"))),
             )
