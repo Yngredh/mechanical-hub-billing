@@ -31,8 +31,14 @@ class MercadoPagoPaymentGateway(
         val body = MercadoPagoJson.createOrderBody(command)
         val response = send("createOrder", post("/v1/orders", command.idempotencyKey, body))
         return when (classify(response.statusCode())) {
-            HttpClass.SUCCESS -> MercadoPagoJson.parseCreated(response.body())
-            HttpClass.TRANSIENT -> throw TransientGatewayException("MP indisponivel (${response.statusCode()})")
+            HttpClass.SUCCESS -> {
+                MercadoPagoJson.parseCreated(response.body())
+            }
+
+            HttpClass.TRANSIENT -> {
+                throw TransientGatewayException("MP indisponivel (${response.statusCode()})")
+            }
+
             HttpClass.PERMANENT -> {
                 log.error("MP rejeitou a criacao ({}): {}", response.statusCode(), response.body().take(MAX_LOGGED_BODY))
                 throw PermanentGatewayException("MP rejeitou a criacao (${response.statusCode()})")
