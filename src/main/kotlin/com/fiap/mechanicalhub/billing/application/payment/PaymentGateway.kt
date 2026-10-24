@@ -3,12 +3,13 @@ package com.fiap.mechanicalhub.billing.application.payment
 import com.fiap.mechanicalhub.billing.domain.payment.CancelOutcome
 import com.fiap.mechanicalhub.billing.domain.payment.OrderLookup
 import java.math.BigDecimal
-import java.time.Instant
+import java.time.Duration
 
 data class CreateOrderCommand(
     val orderId: String,
     val amount: BigDecimal,
-    val expiresAt: Instant,
+    /** Duração até a order expirar no MP (ISO 8601, ex.: PT24H5M); a API não aceita timestamp. */
+    val expiresIn: Duration,
     val idempotencyKey: String,
 )
 
