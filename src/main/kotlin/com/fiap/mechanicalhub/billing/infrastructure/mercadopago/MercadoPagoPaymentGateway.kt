@@ -40,7 +40,11 @@ class MercadoPagoPaymentGateway(
             }
 
             HttpClass.PERMANENT -> {
-                log.error("MP rejeitou a criacao ({}): {}", response.statusCode(), response.body().take(MAX_LOGGED_BODY))
+                log.error(
+                    "MP rejeitou a criacao ({}): {}",
+                    response.statusCode(),
+                    response.body().take(MAX_LOGGED_BODY),
+                )
                 throw PermanentGatewayException("MP rejeitou a criacao (${response.statusCode()})")
             }
         }
